@@ -15,7 +15,6 @@
 // @grant       GM_getValue
 // @grant       GM_setValue
 // @grant       GM_log
-// @resource style https://raw.githubusercontent.com/paul-lrr/nifty-chat-monitor/master/chat-monitor.css
 // @resource material-icons https://fonts.googleapis.com/icon?family=Material+Icons
 // ==/UserScript==
 
@@ -64,6 +63,11 @@ var configFields = {
         "label": "Time needed for a new message to slide in (seconds)",
         "type": "float",
         "default": "1"
+    },
+    "GroupSimilarMessages": {
+        "label": "Group together messages that are practically the same, showing a counter for each added message",
+        "type": "checkbox",
+        "default": true
     },
     "UsernamesToHighlight": {
         "label" : "Username(s)",
@@ -254,6 +258,33 @@ function actionFunction() {
 
     // The div containing the scrollable area
     var chatContentDiv = target.parentNode.parentNode;
+    // Repository that can contain 30 message 'slugs'
+    var messageRepository = function() {
+        var queue = [];
+        setInterval(function() {
+            if (queue.length > 5) {
+                queue.pop();
+            }
+        }, 1000);
+        return {
+            'find': function(slug, message) {
+                var idx = queue.findIndex((obj) => obj.slug == slug);
+                if (idx >= 0) {
+                    queue.unshift(queue.splice(idx, 1)[0]);
+                    idx = 0;
+                } else {
+                    queue.unshift({
+                        slug: slug,
+                        message: message
+                    });
+                }
+                if (queue.length > 30) {
+                    queue.pop();
+                }
+                return queue[idx] && queue[idx].message;
+            }
+        }
+    }();
     // Create an observer instance
     var observer = new MutationObserver(function( mutations ) {
         mutations.forEach(function( mutation ) {
@@ -261,12 +292,44 @@ function actionFunction() {
             if( newNodes !== null ) { // If there are new nodes added
                 newNodes.forEach(function(newNode) {
                     if (newNode.nodeType == Node.ELEMENT_NODE) {
+                        // Ignore the move of a message group
+                        if (newNode.classList.contains('message-group')) {
+                            return;
+                        }
                         // Add the newly added node's height to the scroll distance and reset the reference distance
                         newNode.dataset.height = newNode.scrollHeight;
                         scrollReference = scrollDistance += newNode.scrollHeight;
 
                         if (!newNode.classList.contains('chat-line__message')) { // Only treat chat messages
                             return;
+                        }
+
+                        // Add the generated "slug" of the message and compare for grouping
+                        if (GM_config.get("GroupSimilarMessages")) {
+                            var slug = "";
+                            newNode.querySelectorAll('.text-fragment,img.chat-image').forEach((el) => slug += el.alt || el.textContent);
+                            slug = slug.toLowerCase().replace(/[^a-z0-9:]/g, '');
+                            var matchedMessage = messageRepository.find(slug, newNode);
+                            if (matchedMessage && !matchedMessage.classList.contains('message-group')) {
+                                matchedMessage.classList.add('message-group');
+                                var counterContainer = document.createElement('span'),
+                                    counter = document.createElement('span');
+                                counter.textContent = "1";
+                                counterContainer.innerHTML = '&times; ';
+                                counterContainer.className = 'counter';
+                                counterContainer.appendChild(counter);
+                                matchedMessage.insertBefore(counterContainer, matchedMessage.childNodes[0]);
+                                matchedMessage.counter = counter;
+                            }
+                            if (newNode != matchedMessage && matchedMessage && matchedMessage.parentNode) {
+                                scrollReference = scrollDistance -= newNode.dataset.height;
+                                newNode.classList.add('tw-hide');
+                                matchedMessage.parentNode.appendChild(matchedMessage);
+                                matchedMessage.counter.textContent++;
+                                matchedMessage.counter.parentNode.classList.add('bump');
+                                setTimeout(() => matchedMessage.counter.parentNode.classList.remove('bump'), 150);
+                                return; // newNode has been swallowed, no need to process any further
+                            }
                         }
 
                         //add data-user=<username> for user-based highlighting
@@ -369,7 +432,207 @@ function actionFunction() {
         }, 5000);
     }
 }
+GM_addStyle(`
+@import url(https://fonts.googleapis.com/css?family=Open+Sans+Condensed:300,300italic,700);
 
+body {
+    background-color:black !important;
+    font-family: 'Open Sans Condensed', sans-serif !important;
+}
+
+#root .chat-room__header, .chat-list__more-messages-placeholder, .pinned-cheer, .chat-room__notifications {
+    display:none !important;
+}
+
+/* Thanks malc for the fixes to how the chat-interface looks*/
+.chat-input {
+    background: black;
+}
+
+.chat-input select,
+.chat-input textarea,
+.chat-input button,
+.chat-input input[type=text],
+.chat-input input[type=email],
+.chat-input input[type=password],
+.chat-input input[type=search],
+.chat-input {
+    font-size: 2.4rem !important;
+}
+
+.chat-list .tw-full-height.reverse {
+    display:flex !important;
+    flex-direction:column-reverse;
+    padding-bottom:100vh !important;
+}
+
+.chat-room__container {
+    top:0px !important;
+    background-color:black !important;
+}
+.chat-list .tw-full-height {
+    background-color:black !important;
+    color:#eee;
+    display: flex;
+    flex-direction: column;
+    justify-content:flex-start;
+    padding-top:0 !important;
+}
+.chat-line__message.odd {
+    background-color:#111 !important;
+}
+.chat-list .tw-full-height > .chat-line__message, .chat-line__status, .user-notice-line {
+    padding:3px 1px 3px 6px !important;
+    font-size:32px !important;
+    line-height:35px !important;
+    border-bottom:#444 solid 1px !important;
+}
+
+.chat-line__message .chat-card__link {
+    background-color: #333 !important;
+}
+.chat-line__message .chat-card__link div {
+    display: inline;
+}
+.chat-line__message .chat-card__link .chat-card__title span {
+    font-size: 32px !important;
+    line-height: 35px !important;
+    color: white;
+}
+.chat-line__message .chat-card__link .chat-card__title + div span {
+    font-size: 32px !important;
+    line-height: 35px !important;
+    color: #bbb !important;
+}
+div.mention-fragment {
+    background-color: transparent !important;
+    padding: 0;
+}
+.special-message {
+    background-color: inherit !important;
+}
+.system-msg {
+    background-color: inherit !important;
+}
+
+.mod-icon {
+    display:none !important;
+}
+.chat-badge {
+    display:none !important;
+}
+img {
+    max-width:100%;
+    max-height:50vh;
+}
+/* TODO: no whisper tested yet */
+.chat-messages .whisper-line.whisper-incoming {
+    background-color:#3b010e !important;
+}
+a {
+    color:inherit !important;
+}
+.chat-author__display-name {
+    color:green !important;
+}
+span[data-a-target='chat-message-text'], img.chat-image {
+    color:white !important;
+    font-weight:300 !important;
+}
+
+.deleted {
+    opacity:0.2;
+}
+.mentioned {
+    color: inherit;
+    background-color: inherit;
+}
+
+img.chat-line__message--emote {
+    margin:0;
+    vertical-align:baseline;
+}
+
+/* Clean up subscription messages */
+.tw-flex > .tw-c-text-alt-2 {
+    display:none;
+}
+p.tw-c-text-link{
+    display:inline;
+}
+.tw-mg-l-05 .tw-block {
+    display:inline !important;
+}
+p.tw-c-text-link, p.tw-mg-l-05{
+    font-size:32px;
+    line-height:35px;
+}
+div.tw-mg-y-05{
+    margin-bottom:0 !important;
+    margin-top:0 !important;
+}
+div.tw-pd-y-05{
+    padding:3px 1px 3px 6px !important;
+}
+div.tw-pd-r-2{
+    padding-right:0 !important;
+}
+
+::-webkit-scrollbar {
+    display: none;
+}
+
+#settings-wheel {
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    color: rgba(255,255,255,0.3);
+    cursor:pointer;
+    z-index: 50;
+}
+#settings-wheel:hover {
+    color: rgba(255,255,255,1);
+}
+
+.sticky-message {
+    display:none !important;
+}
+.chat-messages {
+    top:0px !important;
+}
+#hide {
+    z-index: 99;
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background-color: black;
+    font-size: 32px;
+    font-weight: bold;
+    text-align: center;
+    padding-top: 200px;
+    display: none;
+}
+body .room-selector__header {
+ display:none !important;
+}
+body .pinned-cheer-v2 {
+ display:none !important;
+}
+.scrollable-area .simplebar-track {
+    display:none !important;
+}
+.message-group .counter {
+    font-weight: bold;
+    float: right;
+    font-size: 80%;
+    transition: 1s;
+    padding-right: 10px;
+}
+.message-group .counter.bump {
+  transition: 0.1s;
+  font-size: 150%;
+}
+`);
 //inject custom stylessheet
 var style = GM_getResourceText('style');
 GM_addStyle(style);

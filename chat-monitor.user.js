@@ -4,7 +4,7 @@
 // @description    reformats twitch chat for display on a chat monitor
 // @match        https://www.twitch.tv/popout/*/chat?display*
 // @match        https://www.twitch.tv/*/chat?display*
-// @version    0.303
+// @version    0.304
 // @updateURL https://raw.githubusercontent.com/paul-lrr/nifty-chat-monitor/master/chat-monitor.user.js
 // @downloadURL https://raw.githubusercontent.com/paul-lrr/nifty-chat-monitor/master/chat-monitor.user.js
 // @require  https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js
@@ -68,6 +68,11 @@ var configFields = {
         "label": "Group together messages that are practically the same, showing a counter for each added message",
         "type": "checkbox",
         "default": true
+    },
+    "MoveGroupedMessagesToTop": {
+        "label": "Move grouped messages to the top",
+        "type": "checkbox",
+        "default": false
     },
     "UsernamesToHighlight": {
         "label" : "Username(s)",
@@ -244,6 +249,10 @@ function generateKeywordHighlightingCss() {
     return generatedCss;
 }
 
+function inTopHalfView(el) {
+    return el.getBoundingClientRect().top >= 0 && el.getBoundingClientRect().bottom <= (window.innerHeight || document.documentElement.clientHeight) / 2;
+}
+
 function actionFunction() {
     //add keyboard command and element to hide chat
     $('body').keydown((e)=>{
@@ -258,28 +267,23 @@ function actionFunction() {
 
     // The div containing the scrollable area
     var chatContentDiv = target.parentNode.parentNode;
-    // Repository that can contain 30 message 'slugs'
+    // Repository that can contain recent message 'slugs' to compare with
     var messageRepository = function() {
         var queue = [];
-        setInterval(function() {
-            if (queue.length > 5) {
-                queue.pop();
-            }
-        }, 1000);
         return {
             'find': function(slug, message) {
                 var idx = queue.findIndex((obj) => obj.slug == slug);
-                if (idx >= 0) {
-                    queue.unshift(queue.splice(idx, 1)[0]);
-                    idx = 0;
-                } else {
+                if (idx < 0) {
                     queue.unshift({
                         slug: slug,
                         message: message
                     });
-                }
-                if (queue.length > 30) {
-                    queue.pop();
+                    for (var i = queue.length - 1; i >= 0 && !inTopHalfView(queue[i].message); i--) {
+                        queue.pop();
+                    }
+                } else if (GM_config.get("MoveGroupedMessagesToTop")) {
+                    queue.unshift(queue.splice(idx, 1)[0]);
+                    idx = 0;
                 }
                 return queue[idx] && queue[idx].message;
             }
@@ -304,6 +308,7 @@ function actionFunction() {
                             return;
                         }
 
+                        newNode.classList.toggle('odd', newNode.previousElementSibling.classList.contains('odd') == newNode.previousElementSibling.classList.contains('tw-hide'));
                         // Add the generated "slug" of the message and compare for grouping
                         if (GM_config.get("GroupSimilarMessages")) {
                             var slug = "";
@@ -324,7 +329,16 @@ function actionFunction() {
                             if (newNode != matchedMessage && matchedMessage && matchedMessage.parentNode) {
                                 scrollReference = scrollDistance -= newNode.dataset.height;
                                 newNode.classList.add('tw-hide');
-                                matchedMessage.parentNode.appendChild(matchedMessage);
+                                if (GM_config.get("MoveGroupedMessagesToTop")) {
+                                    var nextMessage = matchedMessage.nextElementSibling;
+                                    matchedMessage.parentNode.appendChild(matchedMessage);
+                                    while (nextMessage != null) {
+                                        nextMessage.classList.toggle('odd');
+                                        nextMessage = nextMessage.nextElementSibling;
+                                    }
+                                    // make it odd if the previous entry was even and visible (XOR comparison)
+                                    matchedMessage.classList.toggle('odd', matchedMessage.previousElementSibling.classList.contains('odd') == matchedMessage.previousElementSibling.classList.contains('tw-hide'));
+                                }
                                 matchedMessage.counter.textContent++;
                                 matchedMessage.counter.parentNode.classList.add('bump');
                                 setTimeout(() => matchedMessage.counter.parentNode.classList.remove('bump'), 150);
@@ -378,10 +392,6 @@ function actionFunction() {
                                     }).catch(e => console.log(e));
                                 }
                             });
-                        }
-
-                        if (!newNode.previousElementSibling.classList.contains('odd')) {
-                            newNode.classList.add('odd');
                         }
 
                         newNode.querySelectorAll('img').forEach(img => {

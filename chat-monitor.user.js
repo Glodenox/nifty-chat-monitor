@@ -249,8 +249,13 @@ function generateKeywordHighlightingCss() {
     return generatedCss;
 }
 
-function inTopHalfView(el) {
-    return el.getBoundingClientRect().top >= 0 && el.getBoundingClientRect().bottom <= (window.innerHeight || document.documentElement.clientHeight) / 2;
+var threeQuarterOfWindow = (window.innerHeight || document.documentElement.clientHeight) * 0.75;
+window.addEventListener('resize', () => {
+    threeQuarterOfWindow = (window.innerHeight || document.documentElement.clientHeight) * 0.75;
+});
+// Check whether an element is visible in the top 75% of the screen
+function inView(el) {
+    return el.getBoundingClientRect().top >= 0 && el.getBoundingClientRect().bottom <= threeQuarterOfWindow;
 }
 
 function actionFunction() {
@@ -278,7 +283,7 @@ function actionFunction() {
                         slug: slug,
                         message: message
                     });
-                    for (var i = queue.length - 1; i >= 0 && !inTopHalfView(queue[i].message); i--) {
+                    for (var i = queue.length - 1; i >= 0 && !inView(queue[i].message); i--) {
                         queue.pop();
                     }
                 } else if (GM_config.get("MoveGroupedMessagesToTop")) {
@@ -312,8 +317,8 @@ function actionFunction() {
                         // Add the generated "slug" of the message and compare for grouping
                         if (GM_config.get("GroupSimilarMessages")) {
                             var slug = "";
-                            newNode.querySelectorAll('.text-fragment,img.chat-image').forEach((el) => slug += el.alt || el.textContent);
-                            slug = slug.toLowerCase().replace(/[^a-z0-9:]/g, '');
+                            newNode.querySelectorAll('.text-fragment,img.chat-image').forEach((el) => slug += el.alt || el.textContent.toLowerCase());
+                            slug = slug.replace(/[^a-zA-Z0-9:()]/g, '');
                             var matchedMessage = messageRepository.find(slug, newNode);
                             if (matchedMessage && !matchedMessage.classList.contains('message-group')) {
                                 matchedMessage.classList.add('message-group');
